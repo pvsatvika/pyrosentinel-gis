@@ -183,7 +183,7 @@
             </div>
           </div>
 
-          <!-- Telemetry Grid -->
+          <!-- Telemetry Grid with TAI & Processing Latency -->
           <div class="grid grid-cols-2 gap-3 pt-2">
             <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
               <span class="text-xs text-gray-500 block">Temperature</span>
@@ -192,6 +192,14 @@
             <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
               <span class="text-xs text-gray-500 block">Confidence</span>
               <span id="target-confidence" class="text-sm font-bold text-gray-900">--</span>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
+              <span class="text-xs text-gray-500 block">Thermal Anomaly Index</span>
+              <span id="target-tai" class="text-xs font-bold mt-1 inline-block">--</span>
+            </div>
+            <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
+              <span class="text-xs text-gray-500 block">Processing Latency</span>
+              <span class="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 inline-block mt-1">1.2s (Real-time PIP)</span>
             </div>
             <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 col-span-2">
               <span class="text-xs text-gray-500 block">Coordinates</span>
@@ -223,18 +231,23 @@
         </div>
 
       </div>
-
-      <!-- TOAST NOTIFICATION CONTAINER -->
-      <div id="toast" class="hidden transition-all duration-300 bg-emerald-800 text-white p-3.5 rounded-xl shadow-lg flex items-center justify-between text-xs font-medium border border-emerald-700">
-        <div class="flex items-center gap-2">
-          <svg class="w-4 h-4 text-emerald-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-          </svg>
-          <span id="toast-message">Notification dispatched to Safety Officer.</span>
-        </div>
-      </div>
-
     </aside>
+  </div>
+
+  <!-- FLOATING EMERGENCY TOAST CONTAINER (Top-Right) -->
+  <div 
+    id="toast" 
+    class="hidden fixed top-5 right-6 z-[2000] max-w-md transition-all duration-300 transform bg-red-950 text-white p-4 rounded-xl shadow-2xl flex items-center gap-3 border border-red-700/60 backdrop-blur-md"
+  >
+    <div class="p-2.5 bg-red-600 rounded-lg shrink-0 flex items-center justify-center text-white shadow">
+      <svg class="w-5 h-5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
+      </svg>
+    </div>
+    <div>
+      <h4 id="toast-title" class="text-xs font-bold uppercase tracking-wider text-red-400">Emergency Broadcast</h4>
+      <p id="toast-message" class="text-xs font-semibold text-red-100 mt-0.5 leading-snug">🚨 Emergency Alert Dispatched via SMS/API to Plant Safety Officer & Local Fire Station!</p>
+    </div>
   </div>
 
   <!-- SCRIPT LOGIC -->
@@ -374,15 +387,26 @@
     function processHotspotSpatialData(rawItem) {
       const matchedZone = getSpatialZoneMatch(rawItem.lat, rawItem.lng);
       
-      let category, color, hex, status, spatialMatchText, isIndustrial;
+      let category, color, hex, status, spatialMatchText, isIndustrial, tai, taiClass;
 
-      if (matchedZone) {
+      if (rawItem.category === "Factory Routine Heat" || rawItem.color === "orange") {
+        category = "Factory Routine Heat";
+        color = "orange";
+        hex = "#f97316";
+        isIndustrial = true;
+        spatialMatchText = "Spatial Match: OpenStreetMap Industrial Zone";
+        status = "Standard operating thermal footprint within scheduled industrial furnace threshold.";
+        tai = "0.58 (Moderate)";
+        taiClass = "font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 inline-block";
+      } else if (matchedZone) {
         isIndustrial = true;
         category = "CRITICAL: Industrial Fire Alert";
         color = "red";
         hex = "#ef4444";
         spatialMatchText = "Spatial Match: OpenStreetMap Industrial Zone";
         status = `CRITICAL: Thermal hotspot falls INSIDE ${matchedZone.name} (OSM Industrial Zone). High priority factory containment alert!`;
+        tai = "0.84 (High Anomaly)";
+        taiClass = "font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-200 inline-block";
       } else {
         isIndustrial = false;
         category = "Agricultural / Non-Industrial Burn";
@@ -390,6 +414,8 @@
         hex = "#10b981";
         spatialMatchText = "Spatial Match: Non-Industrial Area";
         status = `Hotspot detected OUTSIDE industrial zone bounds. Classified as Agricultural / Open Stubble Burn.`;
+        tai = "0.32 (Baseline)";
+        taiClass = "font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block";
       }
 
       return {
@@ -400,7 +426,9 @@
         spatialMatchText,
         matchedZoneName: matchedZone ? matchedZone.name : null,
         isIndustrial,
-        status
+        status,
+        tai,
+        taiClass
       };
     }
 
@@ -461,6 +489,11 @@
       document.getElementById('target-confidence').textContent = data.confidence;
       document.getElementById('target-coords').textContent = `${data.lat.toFixed(4)}° N, ${data.lng.toFixed(4)}° E`;
       document.getElementById('target-status').textContent = data.status;
+
+      // Update TAI metric & style
+      const taiElem = document.getElementById('target-tai');
+      taiElem.textContent = data.tai;
+      taiElem.className = data.taiClass;
 
       // Update Heat Category Badge
       const badge = document.getElementById('target-badge');
@@ -605,7 +638,7 @@
         selectTarget(firstHotspot);
       }
 
-      showToast(`📡 Loaded 10 Live Thermal Hotspots for Telangana/Hyderabad`);
+      showToast(`📡 Loaded 10 Live Thermal Hotspots for Telangana/Hyderabad`, false);
     }
 
     // RESET MAP VIEW TO HYDERABAD
@@ -625,7 +658,7 @@
       document.getElementById('detail-state').classList.add('hidden');
       currentSelectedTarget = null;
 
-      showToast("🔄 Map view reset to Hyderabad industrial baseline.");
+      showToast("🔄 Map view reset to Hyderabad industrial baseline.", false);
     }
 
     // Toggle counter for test hotspot simulation
@@ -666,18 +699,18 @@
       addMarkerToMap(processed, true);
 
       if (processed.isIndustrial) {
-        showToast(`🔴 INSIDE OSM ZONE: ${processed.category} generated!`);
+        showToast(`🔴 INSIDE OSM ZONE: ${processed.category} generated!`, false);
       } else {
-        showToast(`🟢 OUTSIDE OSM ZONE: ${processed.category} generated!`);
+        showToast(`🟢 OUTSIDE OSM ZONE: ${processed.category} generated!`, false);
       }
     }
 
-    // Notify Safety Officer Action
+    // Notify Safety Officer Action with Top-Right Emergency Toast
     function notifySafetyOfficer() {
       if (!currentSelectedTarget) return;
       
       const btn = document.getElementById('notify-btn');
-      const originalText = btn.innerHTML;
+      const originalHtml = btn.innerHTML;
 
       btn.disabled = true;
       btn.innerHTML = `
@@ -685,27 +718,50 @@
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        Dispatching Alert...
+        <span>Dispatching Alert...</span>
       `;
 
       setTimeout(() => {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
-        showToast(`SMS & App Alert sent to Safety Officer for "${currentSelectedTarget.name}"`);
-      }, 700);
+        btn.className = "w-full bg-emerald-600 text-white font-medium py-2.5 rounded-lg shadow-sm flex items-center justify-center gap-2 text-sm transition-all";
+        btn.innerHTML = `
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+          <span>Alert Sent ✓</span>
+        `;
+
+        showToast("🚨 Emergency Alert Dispatched via SMS/API to Plant Safety Officer & Local Fire Station!", true);
+
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.className = "w-full bg-red-600 hover:bg-red-700 text-white font-medium py-2.5 rounded-lg shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 text-sm cursor-pointer active:scale-95";
+          btn.innerHTML = originalHtml;
+        }, 2500);
+      }, 600);
     }
 
-    // Show Toast Helper
-    function showToast(message) {
+    // Show Toast Helper (Emergency Floating Overlay top-right)
+    function showToast(message, isEmergency = true) {
       const toast = document.getElementById('toast');
+      const toastTitle = document.getElementById('toast-title');
       const toastMsg = document.getElementById('toast-message');
 
       toastMsg.textContent = message;
+
+      if (isEmergency) {
+        toast.className = "fixed top-5 right-6 z-[2000] max-w-md transition-all duration-300 transform bg-red-950 text-white p-4 rounded-xl shadow-2xl flex items-center gap-3 border border-red-700/60 backdrop-blur-md";
+        toastTitle.textContent = "Emergency Broadcast";
+      } else {
+        toast.className = "fixed top-5 right-6 z-[2000] max-w-md transition-all duration-300 transform bg-gray-900 text-white p-4 rounded-xl shadow-2xl flex items-center gap-3 border border-gray-700 backdrop-blur-md";
+        toastTitle.textContent = "PyroSentinel GIS System Note";
+      }
+
       toast.classList.remove('hidden');
-      
-      setTimeout(() => {
+
+      if (window.toastTimer) clearTimeout(window.toastTimer);
+      window.toastTimer = setTimeout(() => {
         toast.classList.add('hidden');
-      }, 4000);
+      }, 4500);
     }
   </script>
 </body>
