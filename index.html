@@ -100,15 +100,15 @@
         <div class="space-y-2 text-xs font-medium text-gray-700">
           <div class="flex items-center gap-2.5">
             <span class="w-3.5 h-3.5 rounded-full bg-red-500 border-2 border-white shadow-sm shrink-0"></span>
-            <span class="font-semibold text-gray-900">Red:</span> CRITICAL: Industrial Fire Alert
-          </div>
-          <div class="flex items-center gap-2.5">
-            <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white shadow-sm shrink-0"></span>
-            <span class="font-semibold text-gray-900">Green:</span> Agricultural / Non-Industrial Burn
+            <span class="font-semibold text-gray-900">Red:</span> CRITICAL (Zone + TAI ≥ 0.50)
           </div>
           <div class="flex items-center gap-2.5">
             <span class="w-3.5 h-3.5 rounded-full bg-amber-500 border-2 border-white shadow-sm shrink-0"></span>
-            <span class="font-semibold text-gray-900">Orange:</span> Factory Routine Heat
+            <span class="font-semibold text-gray-900">Orange:</span> Routine Heat (Zone + TAI < 0.50)
+          </div>
+          <div class="flex items-center gap-2.5">
+            <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white shadow-sm shrink-0"></span>
+            <span class="font-semibold text-gray-900">Green:</span> Agricultural Burn (Outside Zone)
           </div>
           <div class="flex items-center gap-2.5 pt-2 border-t border-gray-200 mt-2">
             <span class="w-3.5 h-3.5 rounded bg-blue-500/30 border border-blue-600 shrink-0"></span>
@@ -344,7 +344,7 @@
       return null;
     }
 
-    // Initial Hyderabad Baseline Hotspots Data
+    // Initial Hyderabad Baseline Hotspots Data with Orange (Routine Heat) & Red & Green Points
     const initialRawHotspots = [
       {
         id: "hyd-1",
@@ -352,7 +352,8 @@
         lat: 17.5320,
         lng: 78.2650,
         temp: "680 °C",
-        confidence: "98.4%"
+        confidence: "98.4%",
+        taiVal: 0.84
       },
       {
         id: "hyd-2",
@@ -360,61 +361,94 @@
         lat: 17.4680,
         lng: 78.5950,
         temp: "640 °C",
-        confidence: "95.1%"
+        confidence: "95.1%",
+        taiVal: 0.78
       },
       {
         id: "hyd-3",
-        name: "Jeedimetla Chemical Fabricator Sector",
-        lat: 17.5120,
-        lng: 78.4420,
-        temp: "710 °C",
-        confidence: "97.8%"
+        name: "Jeedimetla Furnace Zone (Routine Heat)",
+        lat: 17.5100,
+        lng: 78.4400,
+        temp: "340 °C",
+        confidence: "91.2%",
+        taiVal: 0.38
       },
       {
         id: "hyd-4",
+        name: "Patancheru Boiler Station (Routine Heat)",
+        lat: 17.5280,
+        lng: 78.2580,
+        temp: "355 °C",
+        confidence: "89.5%",
+        taiVal: 0.42
+      },
+      {
+        id: "hyd-5",
         name: "Medchal Agricultural Belt (Stubble Burn)",
         lat: 17.6250,
         lng: 78.4810,
         temp: "145 °C",
-        confidence: "91.0%"
+        confidence: "91.0%",
+        taiVal: 0.32
       }
     ];
 
     let currentSelectedTarget = null;
     let mapMarkerInstances = [];
 
-    // Helper to Classify Hotspot based on Spatial Filtering
+    // Helper to Classify Hotspot based on Spatial Filtering and TAI Threshold
+    // Rules:
+    // Red (CRITICAL): Inside Industrial Zone AND TAI >= 0.50
+    // Orange (Factory Routine Heat): Inside Industrial Zone AND TAI < 0.50
+    // Green (Agricultural Burn): Outside Industrial Zone
     function processHotspotSpatialData(rawItem) {
       const matchedZone = getSpatialZoneMatch(rawItem.lat, rawItem.lng);
-      
-      let category, color, hex, status, spatialMatchText, isIndustrial, tai, taiClass;
+      const isInsideZone = (matchedZone !== null);
 
-      if (rawItem.category === "Factory Routine Heat" || rawItem.color === "orange") {
-        category = "Factory Routine Heat";
-        color = "orange";
-        hex = "#f97316";
+      // Determine numeric TAI: use rawItem.taiVal if available, else derive from temp/zone
+      let taiNum;
+      if (typeof rawItem.taiVal === 'number') {
+        taiNum = rawItem.taiVal;
+      } else if (rawItem.temp && parseFloat(rawItem.temp) > 500) {
+        taiNum = 0.84;
+      } else if (isInsideZone) {
+        taiNum = 0.38;
+      } else {
+        taiNum = 0.32;
+      }
+
+      let category, color, hex, status, spatialMatchText, isIndustrial, isCritical, tai, taiClass;
+
+      if (isInsideZone) {
         isIndustrial = true;
         spatialMatchText = "Spatial Match: OpenStreetMap Industrial Zone";
-        status = "Standard operating thermal footprint within scheduled industrial furnace threshold.";
-        tai = "0.58 (Moderate)";
-        taiClass = "font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 inline-block";
-      } else if (matchedZone) {
-        isIndustrial = true;
-        category = "CRITICAL: Industrial Fire Alert";
-        color = "red";
-        hex = "#ef4444";
-        spatialMatchText = "Spatial Match: OpenStreetMap Industrial Zone";
-        status = `CRITICAL: Thermal hotspot falls INSIDE ${matchedZone.name} (OSM Industrial Zone). High priority factory containment alert!`;
-        tai = "0.84 (High Anomaly)";
-        taiClass = "font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-200 inline-block";
+
+        if (taiNum >= 0.50) {
+          isCritical = true;
+          category = "CRITICAL: Industrial Fire Alert";
+          color = "red";
+          hex = "#ef4444";
+          status = `CRITICAL: Thermal hotspot falls INSIDE ${matchedZone.name} (OSM Industrial Zone) with TAI ≥ 0.50 (${taiNum.toFixed(2)}). High priority factory containment alert!`;
+          tai = `${taiNum.toFixed(2)} (High Anomaly)`;
+          taiClass = "font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-200 inline-block";
+        } else {
+          isCritical = false;
+          category = "Factory Routine Heat";
+          color = "orange";
+          hex = "#f97316";
+          status = `Standard operating thermal footprint INSIDE ${matchedZone.name} (OSM Industrial Zone) with TAI < 0.50 (${taiNum.toFixed(2)}). Scheduled furnace / boiler routine heat.`;
+          tai = `${taiNum.toFixed(2)} (Moderate)`;
+          taiClass = "font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 inline-block";
+        }
       } else {
         isIndustrial = false;
+        isCritical = false;
         category = "Agricultural / Non-Industrial Burn";
         color = "green";
         hex = "#10b981";
         spatialMatchText = "Spatial Match: Non-Industrial Area";
         status = `Hotspot detected OUTSIDE industrial zone bounds. Classified as Agricultural / Open Stubble Burn.`;
-        tai = "0.32 (Baseline)";
+        tai = `${taiNum.toFixed(2)} (Baseline)`;
         taiClass = "font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block";
       }
 
@@ -426,6 +460,7 @@
         spatialMatchText,
         matchedZoneName: matchedZone ? matchedZone.name : null,
         isIndustrial,
+        isCritical,
         status,
         tai,
         taiClass
@@ -452,8 +487,9 @@
 
     // Load Markers on Map
     function addMarkerToMap(data, autoSelect = false) {
+      const isPulsing = (data.color === 'red');
       const marker = L.marker([data.lat, data.lng], {
-        icon: createCustomIcon(data.hex, data.isIndustrial)
+        icon: createCustomIcon(data.hex, isPulsing)
       }).addTo(map);
 
       marker.on('click', () => {
@@ -495,12 +531,14 @@
       taiElem.textContent = data.tai;
       taiElem.className = data.taiClass;
 
-      // Update Heat Category Badge
+      // Update Heat Category Badge (Red, Orange/Amber, or Green)
       const badge = document.getElementById('target-badge');
       badge.textContent = data.category;
 
-      if (data.isIndustrial) {
+      if (data.color === 'red') {
         badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-200";
+      } else if (data.color === 'orange') {
+        badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200";
       } else {
         badge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200";
       }
@@ -531,16 +569,16 @@
 
     // FALLBACK DATASET: 10 Live Satellite Thermal Points Across Telangana & Hyderabad
     const fallbackTelanganaHotspots = [
-      { id: 'ts-1', name: "Patancheru Chemical Factory (Telangana)", lat: 17.5340, lng: 78.2680, temp: "695 °C", confidence: "97.5%" },
-      { id: 'ts-2', name: "Jeedimetla Industrial Sector 2 (Telangana)", lat: 17.5140, lng: 78.4450, temp: "640 °C", confidence: "94.2%" },
-      { id: 'ts-3', name: "Cherlapally Industrial Phase II (Telangana)", lat: 17.4700, lng: 78.5920, temp: "680 °C", confidence: "96.0%" },
-      { id: 'ts-4', name: "Medak Agricultural Stubble Burn", lat: 17.8200, lng: 78.2500, temp: "155 °C", confidence: "91.0%" },
-      { id: 'ts-5', name: "Sangareddy Farm Thermal Anomaly", lat: 17.6100, lng: 78.0800, temp: "148 °C", confidence: "89.5%" },
-      { id: 'ts-6', name: "Nalgonda Agricultural Belt", lat: 17.0500, lng: 79.2600, temp: "162 °C", confidence: "92.4%" },
-      { id: 'ts-7', name: "Rangareddy Biomass Thermal Source", lat: 17.2000, lng: 78.3500, temp: "150 °C", confidence: "88.0%" },
-      { id: 'ts-8', name: "Ghatkesar Crop Stubble Zone", lat: 17.4400, lng: 78.6800, temp: "142 °C", confidence: "90.2%" },
-      { id: 'ts-9', name: "Shamirpet Rural Forest Border", lat: 17.6000, lng: 78.5700, temp: "138 °C", confidence: "87.5%" },
-      { id: 'ts-10', name: "Patancheru Bulk Drug Facility", lat: 17.5280, lng: 78.2580, temp: "720 °C", confidence: "98.1%" }
+      { id: 'ts-1', name: "Patancheru Chemical Factory (Telangana)", lat: 17.5340, lng: 78.2680, temp: "695 °C", confidence: "97.5%", taiVal: 0.86 },
+      { id: 'ts-2', name: "Jeedimetla Industrial Sector 2 (Telangana)", lat: 17.5140, lng: 78.4450, temp: "640 °C", confidence: "94.2%", taiVal: 0.79 },
+      { id: 'ts-3', name: "Cherlapally Industrial Phase II (Telangana)", lat: 17.4700, lng: 78.5920, temp: "680 °C", confidence: "96.0%", taiVal: 0.82 },
+      { id: 'ts-4', name: "Jeedimetla Smelting Plant (Routine Heat)", lat: 17.5050, lng: 78.4350, temp: "340 °C", confidence: "90.0%", taiVal: 0.38 },
+      { id: 'ts-5', name: "Patancheru Power Substation (Routine Heat)", lat: 17.5380, lng: 78.2720, temp: "350 °C", confidence: "91.5%", taiVal: 0.44 },
+      { id: 'ts-6', name: "Medak Agricultural Stubble Burn", lat: 17.8200, lng: 78.2500, temp: "155 °C", confidence: "91.0%", taiVal: 0.32 },
+      { id: 'ts-7', name: "Sangareddy Farm Thermal Anomaly", lat: 17.6100, lng: 78.0800, temp: "148 °C", confidence: "89.5%", taiVal: 0.30 },
+      { id: 'ts-8', name: "Nalgonda Agricultural Belt", lat: 17.0500, lng: 79.2600, temp: "162 °C", confidence: "92.4%", taiVal: 0.33 },
+      { id: 'ts-9', name: "Rangareddy Biomass Thermal Source", lat: 17.2000, lng: 78.3500, temp: "150 °C", confidence: "88.0%", taiVal: 0.31 },
+      { id: 'ts-10', name: "Ghatkesar Crop Stubble Zone", lat: 17.4400, lng: 78.6800, temp: "142 °C", confidence: "90.2%", taiVal: 0.29 }
     ];
 
     // LIVE NASA FIRMS API FETCH VIA CORS PROXY
@@ -661,28 +699,43 @@
       showToast("🔄 Map view reset to Hyderabad industrial baseline.", false);
     }
 
-    // Toggle counter for test hotspot simulation
+    // Toggle counter for test hotspot simulation (Cycle: Red -> Orange -> Green)
     let simToggle = 0;
 
     // Function to Inject Test Satellite Hotspot
     function simulateFire() {
       simToggle++;
       let rawHotspot;
+      const step = simToggle % 3;
 
-      if (simToggle % 2 === 1) {
-        // INSIDE Patancheru Industrial Zone polygon -> CRITICAL Industrial Fire
+      if (step === 1) {
+        // INSIDE Patancheru Industrial Zone polygon with TAI >= 0.50 -> RED Critical Industrial Fire
         const randomLat = 17.5250 + (Math.random() * 0.02);
         const randomLng = 78.2550 + (Math.random() * 0.02);
         rawHotspot = {
           id: Date.now(),
-          name: `Patancheru Industrial Belt - Hotspot #${Math.floor(Math.random() * 899 + 100)}`,
+          name: `Patancheru Chemical Plant - Hotspot #${Math.floor(Math.random() * 899 + 100)}`,
           lat: randomLat,
           lng: randomLng,
           temp: `${Math.floor(Math.random() * 200 + 600)} °C`,
-          confidence: `${(Math.random() * 4 + 95).toFixed(1)}%`
+          confidence: `${(Math.random() * 4 + 95).toFixed(1)}%`,
+          taiVal: 0.84
+        };
+      } else if (step === 2) {
+        // INSIDE Jeedimetla Industrial Zone polygon with TAI < 0.50 -> ORANGE Factory Routine Heat
+        const randomLat = 17.5050 + (Math.random() * 0.02);
+        const randomLng = 78.4300 + (Math.random() * 0.02);
+        rawHotspot = {
+          id: Date.now(),
+          name: `Jeedimetla Furnace - Routine Heat #${Math.floor(Math.random() * 899 + 100)}`,
+          lat: randomLat,
+          lng: randomLng,
+          temp: `340 °C`,
+          confidence: `91.0%`,
+          taiVal: 0.38
         };
       } else {
-        // OUTSIDE Industrial polygon (Medak / Sangareddy agricultural belt) -> Agricultural Burn
+        // OUTSIDE Industrial polygon (Medak / Sangareddy agricultural belt) -> GREEN Agricultural Burn
         const randomLat = 17.6500 + (Math.random() * 0.05);
         const randomLng = 78.1000 + (Math.random() * 0.05);
         rawHotspot = {
@@ -691,15 +744,18 @@
           lat: randomLat,
           lng: randomLng,
           temp: `${Math.floor(Math.random() * 100 + 140)} °C`,
-          confidence: `${(Math.random() * 5 + 88).toFixed(1)}%`
+          confidence: `${(Math.random() * 5 + 88).toFixed(1)}%`,
+          taiVal: 0.32
         };
       }
 
       const processed = processHotspotSpatialData(rawHotspot);
       addMarkerToMap(processed, true);
 
-      if (processed.isIndustrial) {
-        showToast(`🔴 INSIDE OSM ZONE: ${processed.category} generated!`, false);
+      if (processed.color === 'red') {
+        showToast(`🔴 INSIDE OSM ZONE (TAI ≥ 0.50): ${processed.category} generated!`, false);
+      } else if (processed.color === 'orange') {
+        showToast(`🟠 INSIDE OSM ZONE (TAI < 0.50): ${processed.category} generated!`, false);
       } else {
         showToast(`🟢 OUTSIDE OSM ZONE: ${processed.category} generated!`, false);
       }
